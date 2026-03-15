@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strconv"
@@ -14,19 +15,28 @@ import (
 
 // Config holds all the values needed to provision the instance
 type Config struct {
-	// OCI credentials (from ~/.oci/config or env vars)
-	CompartmentID string
-	SubnetID      string
-	ImageID       string
-	SSHPublicKey  string
-
-	// Instance settings
-	InstanceName string
-	OCPUs        float32
-	MemoryGB     float32
-
-	// Retry settings
+	CompartmentID        string
+	SubnetID             string
+	ImageID              string
+	SSHPublicKey         string
+	InstanceName         string
+	OCPUs                float32
+	MemoryGB             float32
 	RetryIntervalSeconds int
+}
+
+func setupLogger() *os.File {
+	os.MkdirAll("logs", 0755)
+	logFileName := fmt.Sprintf("logs/provisioner-%s.log", time.Now().Format("2006-01-02"))
+	logFile, err := os.OpenFile(logFileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalf("❌ Failed to open log file: %v", err)
+	}
+	// Write to both terminal AND log file simultaneously
+	multiWriter := io.MultiWriter(os.Stdout, logFile)
+	log.SetOutput(multiWriter)
+	log.SetFlags(log.Ldate | log.Ltime)
+	return logFile
 }
 
 func loadConfig() Config {
@@ -131,57 +141,59 @@ func getAvailabilityDomains(ctx context.Context, identityClient interface{}, com
 }
 
 func main() {
-	fmt.Println("🚀 OCI ARM A1 Instance Provisioner (Go)")
-	fmt.Println("========================================")
+	// Setup logging to file + terminal
+	logFile := setupLogger()
+	defer logFile.Close()
+
+	log.Println("🚀 OCI ARM A1 Instance Provisioner (Go)")
+	log.Println("========================================")
 
 	cfg := loadConfig()
-
-	// Load OCI config from ~/.oci/config (default profile)
 	configProvider := common.DefaultConfigProvider()
 
-	// Create compute client
 	computeClient, err := core.NewComputeClientWithConfigurationProvider(configProvider)
 	if err != nil {
 		log.Fatalf("❌ Failed to create OCI compute client: %v", err)
 	}
 
 	ctx := context.Background()
-
-	// Get availability domains to try
 	ads := getAvailabilityDomains(ctx, nil, cfg.CompartmentID)
 
-	fmt.Printf("📋 Config:\n")
-	fmt.Printf("   Instance Name : %s\n", cfg.InstanceName)
-	fmt.Printf("   Shape         : VM.Standard.A1.Flex\n")
-	fmt.Printf("   OCPUs         : %.0f\n", cfg.OCPUs)
-	fmt.Printf("   Memory (GB)   : %.0f\n", cfg.MemoryGB)
-	fmt.Printf("   Retry Interval: %d seconds\n", cfg.RetryIntervalSeconds)
-	fmt.Printf("   ADs to try    : %v\n\n", ads)
+	log.Printf("📋 Config:")
+	log.Printf("   Instance Name : %s", cfg.InstanceName)
+	log.Printf("   Shape         : VM.Standard.A1.Flex")
+	log.Printf("   OCPUs         : %.0f", cfg.OCPUs)
+	log.Printf("   Memory (GB)   : %.0f", cfg.MemoryGB)
+	log.Printf("   Retry Interval: %d seconds", cfg.RetryIntervalSeconds)
+	log.Printf("   ADs to try    : %v", ads)
+	log.Println("========================================")
 
 	attempt := 1
 	for {
-		fmt.Printf("🔄 Attempt #%d — %s\n", attempt, time.Now().Format("2006-01-02 15:04:05"))
+		log.Printf("🔄 Attempt #%d", attempt)
 
 		for _, ad := range ads {
-			fmt.Printf("   Trying availability domain: %s ... ", ad)
+			log.Printf("   Trying AD: %s ...", ad)
 			instance, err := tryCreateInstance(ctx, computeClient, cfg, ad)
 			if err != nil {
-				fmt.Printf("❌ Failed: %v\n", err)
+				log.Printf("   ❌ Failed on %s: %v", ad, err)
 				continue
 			}
 
 			// SUCCESS!
-			fmt.Printf("\n✅ SUCCESS! Instance created!\n")
-			fmt.Printf("   Instance ID  : %s\n", *instance.Id)
-			fmt.Printf("   Display Name : %s\n", *instance.DisplayName)
-			fmt.Printf("   Shape        : %s\n", *instance.Shape)
-			fmt.Printf("   AD           : %s\n", *instance.AvailabilityDomain)
-			fmt.Printf("   State        : %s\n", instance.LifecycleState)
-			fmt.Println("\n🎉 Your ARM instance is being provisioned. Check the OCI console for the public IP.")
+			log.Println("========================================")
+			log.Printf("✅ SUCCESS! Instance created!")
+			log.Printf("   Instance ID : %s", *instance.Id)
+			log.Printf("   Name        : %s", *instance.DisplayName)
+			log.Printf("   Shape       : %s", *instance.Shape)
+			log.Printf("   AD          : %s", *instance.AvailabilityDomain)
+			log.Printf("   State       : %s", instance.LifecycleState)
+			log.Println("🎉 Check OCI Console for the public IP!")
+			log.Println("========================================")
 			os.Exit(0)
 		}
 
-		fmt.Printf("   All ADs are at capacity. Waiting %d seconds before retry...\n\n", cfg.RetryIntervalSeconds)
+		log.Printf("   ⏳ All ADs at capacity. Waiting %d seconds before next attempt...", cfg.RetryIntervalSeconds)
 		time.Sleep(time.Duration(cfg.RetryIntervalSeconds) * time.Second)
 		attempt++
 	}
