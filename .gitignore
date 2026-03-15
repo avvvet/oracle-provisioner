@@ -1,37 +1,14 @@
-# Ignore binary files
-*.exe
-*.dll
-*.so
-*.dylib
-
-# Ignore go binaries
-/bin/
-/pkg/
-/vendor/
-
-# Ignore workspace-specific files
-.idea/
-.vscode/
-*.code-workspace
-/cmd/__debug_bin
-
-# Ignore OS-generated files
-.DS_Store
-Thumbs.db
-
-# Ignore go build output
-/build/
-/bin/
-/pkg/
-
-# Ignore environment files
+# Secrets
 .env
-.env.production
-.env.staging
-.env.*
 
-# Ignore .log
-*.log
+# OCI keys
+*.pem
 
-# Ignore .db kv store
-.db
+# Binaries
+bin/
+
+# Logs
+logs/
+
+# Go build cache
+*.test
